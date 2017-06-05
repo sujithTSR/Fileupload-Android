@@ -4,25 +4,21 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.ProgressDialog;
 import android.content.CursorLoader;
-import android.content.DialogInterface;
 import android.content.Intent;
 import android.database.Cursor;
-import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.PowerManager;
 import android.provider.MediaStore;
+import android.support.annotation.NonNull;
 import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
-import android.view.Menu;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
-
-import com.android.internal.http.multipart.FilePart;
 
 import java.io.DataOutputStream;
 import java.io.File;
@@ -32,9 +28,25 @@ import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.sql.Time;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
 
-public class MainActivity extends AppCompatActivity implements View.OnClickListener{
-    private String BASE_URL = "http://192.168.43.91:9292/pages/create/";
+import okhttp3.MediaType;
+import okhttp3.MultipartBody;
+import okhttp3.OkHttpClient;
+import okhttp3.RequestBody;
+import pub.devrel.easypermissions.EasyPermissions;
+import retrofit2.Call;
+import retrofit2.Callback;
+import retrofit2.Response;
+import retrofit2.Retrofit;
+import retrofit2.converter.gson.GsonConverterFactory;
+
+public class MainActivity extends AppCompatActivity implements View.OnClickListener, EasyPermissions.PermissionCallbacks{
+//    private String BASE_URL = "https://jfxvvmorvy.localtunnel.me/pages/create/";
+    private String BASE_URL = "http://192.168.1.100:9292";
+
     private static final int PICK_FILE_REQUEST = 1;
     private static final String TAG = MainActivity.class.getSimpleName();
     private String selectedFilePath;
@@ -43,6 +55,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     Button bUpload;
     TextView tvFileName;
     ImageView ivAttachment;
+    private Uri uri;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -83,7 +96,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                     @Override
                     public void run() {
                         try{
-                            uploadFile(selectedFilePath);
+//                            upload_retrofit();
+//                            uploadFile(selectedFilePath);
                         }
                         catch (OutOfMemoryError o){
                             runOnUiThread(new Runnable() {
@@ -114,6 +128,12 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     }
 
     @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        EasyPermissions.onRequestPermissionsResult(requestCode, permissions, grantResults, MainActivity.this);
+    }
+
+    @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (resultCode == Activity.RESULT_OK){
@@ -121,23 +141,71 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 if (data == null){
                     return ;
                 }
+                uri = data.getData();
+                Log.v("Here", "upload_retrofit");
+                if(EasyPermissions.hasPermissions(this, Manifest.permission.READ_EXTERNAL_STORAGE)){
+                    Log.v("Here", "permissions already there");
 
-                PowerManager powerManager = (PowerManager) getSystemService(POWER_SERVICE);
-                wakeLock = powerManager.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK, TAG);
-                wakeLock.acquire();
-                // ================================================
-                Uri uri = data.getData();
-                selectedFilePath = getPath(uri);
-                // ================================================
-//                selectedFilePath = FilePath.
-//                        uri.getPath();
-                Log.i(TAG, "Selected File Path:" + selectedFilePath);
+                    String filePath = getPath(uri);
+                    File file = new File(filePath);
+                    Log.v("Here", "file "+ file.getName());
+                    OkHttpClient client = new OkHttpClient.Builder()
+                            .connectTimeout(120, TimeUnit.SECONDS)
+                            .retryOnConnectionFailure(true)
+                            .readTimeout(120,TimeUnit.SECONDS).build();
+                    Log.d(TAG, "Filename " + file.getName());
+//                    image/*
+//                    multipart/form-data
+                    RequestBody mFile = RequestBody.create(MediaType.parse("image/*"), file);
+                    MultipartBody.Part fileToUpload = MultipartBody.Part.createFormData("file", file.getName(), mFile);
+                    RequestBody filename = RequestBody.create(MediaType.parse("text/plain"), file.getName());
+                    Retrofit retrofit = new Retrofit.Builder()
+                            .baseUrl(BASE_URL)
+                            .client(client)
+                            .addConverterFactory(GsonConverterFactory.create())
+                            .build();
+                    Log.v("Here", retrofit.baseUrl().toString());
 
-                if (selectedFilePath != null && !selectedFilePath.equals("")) {
-                    tvFileName.setText(selectedFilePath);
-                } else {
-                    Toast.makeText(this, "Cannot upload file to server", Toast.LENGTH_SHORT).show();
+                    UploadImageInterface uploadImage = retrofit.create(UploadImageInterface.class);
+                    Call<UploadObject> fileUpload = uploadImage.uploadFile(fileToUpload, filename);
+
+                    fileUpload.enqueue(new Callback<UploadObject>() {
+                        @Override
+                        public void onResponse(Call<UploadObject> call, Response<UploadObject> response) {
+                            if (response != null){
+                                Log.v("response", response.raw().toString());
+//                                Toast.makeText(MainActivity.this, "Response " + response.raw().message(), Toast.LENGTH_LONG).show();
+//                                Toast.makeText(MainActivity.this, "Success " + response.body().getSuccess(), Toast.LENGTH_LONG).show();
+                            }
+                        }
+                        @Override
+                        public void onFailure(Call<UploadObject> call, Throwable t) {
+                            Log.d(TAG, "Error " + t.getMessage());
+                        }
+                    });
                 }
+                else {
+                    EasyPermissions.requestPermissions(this, getString(R.string.app_name), 300, Manifest.permission.READ_EXTERNAL_STORAGE);
+                }
+
+
+
+//                PowerManager powerManager = (PowerManager) getSystemService(POWER_SERVICE);
+//                wakeLock = powerManager.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK, TAG);
+//                wakeLock.acquire();
+//                // ================================================
+//                Uri uri = data.getData();
+//                selectedFilePath = getPath(uri);
+//                // ================================================
+////                selectedFilePath = FilePath.
+////                        uri.getPath();
+//                Log.i(TAG, "Selected File Path:" + selectedFilePath);
+//
+//                if (selectedFilePath != null && !selectedFilePath.equals("")) {
+//                    tvFileName.setText(selectedFilePath);
+//                } else {
+//                    Toast.makeText(this, "Cannot upload file to server", Toast.LENGTH_SHORT).show();
+//                }
 
             }
         }
@@ -153,6 +221,10 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         String result = cursor.getString(column_index);
         cursor.close();
         return result;
+    }
+
+    public void upload_retrofit(){
+
     }
 
     public int uploadFile(final String selectedFilePath){
@@ -182,6 +254,27 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             return 0;
         }
         else{
+
+//            try {
+//                String uploadId = UUID.randomUUID().toString();
+//                Log.v("Log", BASE_URL);
+//
+//                //Creating a multi part request
+//                MultipartUploadRequest muf = new MultipartUploadRequest(this, uploadId, BASE_URL)
+//                        .addFileToUpload(selectedFilePath, "uploaded_file") //Adding file
+//                        .addParameter("name", "here") //Adding text parameter to the request
+//                        .setNotificationConfig(new UploadNotificationConfig())
+//                        .setMaxRetries(2);
+//                         //Starting the upload
+//                muf.setAutoDeleteFilesAfterSuccessfulUpload(false);
+//                muf.setMethod("POST");
+//                muf.startUpload();
+//
+//            } catch (Exception exc) {
+//                Toast.makeText(this, exc.getMessage(), Toast.LENGTH_SHORT).show();
+//            }
+
+
             try{
                 Log.v("Log", BASE_URL);
                 Log.v("File", selectedFilePath);
@@ -198,7 +291,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                         "Content-Type", "multipart/form-data;boundary=" + boundary);
                 connection.setRequestProperty("uploaded_file",selectedFilePath);
 
-                // creating new data output strem
+                // creating new data output stream
                 dataOutputStream = new DataOutputStream(connection.getOutputStream());
                 dataOutputStream.writeBytes("Content-Disposition: form-data; name=\"uploaded_file\";filename=\""
                         + selectedFilePath + "\"" + lineEnd);
@@ -270,10 +363,39 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         }
 
 
+    }
 
+    @Override
+    public void onPermissionsGranted(int requestCode, List<String> perms) {
+        if(uri != null){
+            String filePath = getPath(uri);
+            File file = new File(filePath);
+            RequestBody mFile = RequestBody.create(MediaType.parse("image/*"), file);
+            MultipartBody.Part fileToUpload = MultipartBody.Part.createFormData("file", file.getName(), mFile);
+            RequestBody filename = RequestBody.create(MediaType.parse("text/plain"), file.getName());
+            Retrofit retrofit = new Retrofit.Builder()
+                    .baseUrl(BASE_URL)
+                    .addConverterFactory(GsonConverterFactory.create())
+                    .build();
+            UploadImageInterface uploadImage = retrofit.create(UploadImageInterface.class);
+            Call<UploadObject> fileUpload = uploadImage.uploadFile(fileToUpload, filename);
+            fileUpload.enqueue(new Callback<UploadObject>() {
+                @Override
+                public void onResponse(Call<UploadObject> call, Response<UploadObject> response) {
+                    Toast.makeText(MainActivity.this, "Success " + response.message(), Toast.LENGTH_LONG).show();
+                    Toast.makeText(MainActivity.this, "Success " + response.body().toString(), Toast.LENGTH_LONG).show();
+                }
+                @Override
+                public void onFailure(Call<UploadObject> call, Throwable t) {
+                    Log.d(TAG, "Error " + t.getMessage());
+                }
+            });
+        }
+    }
 
-
-
+    @Override
+    public void onPermissionsDenied(int requestCode, List<String> perms) {
+        Log.d(TAG, "Permission has been denied");
 
     }
 }
